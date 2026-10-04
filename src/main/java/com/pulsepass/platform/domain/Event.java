@@ -93,4 +93,6 @@ public class Event {
     public Venue getVenue() { return venue; }
     public Set<Artist> getArtists() { return artists; }
     public List<Ticket> getTickets() { return tickets; }
+
+    public void setStatus(EventStatus status) { this.status = status; }
 }

@@ -59,4 +59,7 @@ public class Ticket {
     public LocalDateTime getPurchaseDate() { return purchaseDate; }
     public User getUser() { return user; }
     public Event getEvent() { return event; }
+
+    public void setStatus(TicketStatus status) { this.status = status; }
+
 }

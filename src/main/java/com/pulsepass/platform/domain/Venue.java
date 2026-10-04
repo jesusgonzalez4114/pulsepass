@@ -57,4 +57,6 @@ public class Venue {
     public Integer getCapacity() { return capacity; }
     public boolean isActive() { return active; }
     public List<Event> getEvents() { return events; }
+
+    public void setActive(boolean active) { this.active = active; }
 }

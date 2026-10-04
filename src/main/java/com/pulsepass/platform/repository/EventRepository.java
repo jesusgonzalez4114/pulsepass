@@ -18,6 +18,8 @@ public interface EventRepository extends JpaRepository<Event, Long> {
 
     List<Event> findByVenueCode(String venueCode);
 
+    boolean existsByEventCode(String eventCode);
+
     @Query("""
         select distinct e
         from Event e

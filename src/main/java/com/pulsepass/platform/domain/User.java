@@ -51,4 +51,6 @@ public class User {
     public boolean isActive() { return active; }
     public UserProfile getProfile() { return profile; }
     public List<Ticket> getTickets() { return tickets; }
+
+    public void setActive(boolean active) { this.active = active; }
 }
