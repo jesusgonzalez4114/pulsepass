@@ -1,19 +1,41 @@
 # PulsePass
 
-Implementar la capa de persistencia proyecto PulsePass — plataforma de eventos, artistas y entradas.
-**Java 21 · Spring Boot 4 · Spring Data JPA · Hibernate · Flyway · PostgreSQL · Testcontainers**
+Plataforma para descubrir eventos y administrar entradas (conciertos, festivales, conferencias, eventos universitarios, deportivos y culturales).
 
-## Desarolladores
+**Java 21 · Spring Boot 4 · Spring Data JPA · Hibernate · Flyway · PostgreSQL · MapStruct · JUnit 5 · Mockito · AssertJ · Testcontainers**
 
-Jesus Gonzalez-2023214046
+**Desarrolladores:** Jesus Gonzalez (2023214046) · Anuar Hatum (2023214056)
 
-Anuar Hatum-2023214056
+## Estado del proyecto
 
-## Descripción
+| Capa | Estado | Pruebas |
+|---|---|---|
+| Persistencia (entidades, repositories, Flyway) | Implementada | Integración con Testcontainers (PostgreSQL real) |
+| Servicios (reglas de negocio, DTOs, mappers) | Implementada | Unitarias con Mockito y AssertJ |
 
-PulsePass es el núcleo de datos de una plataforma para descubrir eventos y administrar entradas de conciertos, festivales, conferencias y actividades culturales. Este proyecto implementa exclusivamente la **capa de persistencia** definida en el PRD v1.0: modelo relacional, migraciones versionadas, entidades JPA, repositories y consultas, validados con pruebas de integración contra PostgreSQL real.
+## Arquitectura
 
-No incluye API REST, capa Service, autenticación, pagos ni frontend — están explícitamente fuera de alcance del MVP académico (sección 2.4 del PRD).
+```
+Controller (futuro)
+      ↓
+   DTOs (record)
+      ↓
+Service (interfaz + implementación)
+      ├── Repository   → acceso a datos
+      ├── Mapper       → Entity → DTO (MapStruct)
+      ├── Reglas de negocio
+      └── Transacciones
+      ↓
+Entity (JPA)
+      ↓
+PostgreSQL (esquema versionado con Flyway)
+```
+
+Cada capa solo habla con la inmediatamente inferior:
+
+- **Repository** accede a los datos y no contiene reglas de negocio.
+- **Service** decide si una operación está permitida (por ejemplo, si un usuario puede comprar una entrada) y nunca devuelve entidades JPA.
+- **DTO / Mapper** separan el modelo persistente del contrato que verán las capas externas.
 
 ## Modelo de datos
 
@@ -25,105 +47,157 @@ User  1 ──── N Ticket
 Event 1 ──── N Ticket
 ```
 
-### Entidades
-
 | Entidad | Descripción |
 |---|---|
-| `Venue` | Recintos donde se realizan los eventos |
-| `Event` | Eventos (conciertos, festivales, conferencias) |
-| `Artist` | Artistas que participan en eventos |
-| `User` | Usuarios de la plataforma |
-| `UserProfile` | Perfil individual de cada usuario (1:1) |
-| `Ticket` | Entrada emitida a un usuario para un evento, con tipo, precio y estado propios |
+| `Venue` | Recinto donde se realiza un evento (código, ciudad, capacidad, activo) |
+| `Event` | Evento con categoría, estado, fecha y edad mínima |
+| `Artist` | Artista que participa en uno o varios eventos |
+| `User` | Usuario de la plataforma |
+| `UserProfile` | Perfil individual del usuario (1:1) |
+| `Ticket` | Entrada de un usuario para un evento, con tipo, precio y estado propios |
 
-**Por qué `Ticket` es una entidad y no un `@ManyToMany` simple:** un ticket contiene datos propios (`ticketCode`, `type`, `price`, `status`, `purchaseDate`) que no pertenecen ni a `User` ni a `Event` — en cuanto una relación "sabe algo" por sí misma, deja de ser una simple asociación y se convierte en una entidad de pleno derecho, con dos relaciones `@ManyToOne`.
+`Ticket` es una entidad y no un `@ManyToMany` simple porque tiene datos propios (`ticketCode`, `type`, `price`, `status`, `purchaseDate`).
 
-### Enums
+**Enums** (persistidos con `EnumType.STRING`, nunca por ordinal):
+`EventCategory`, `EventStatus` (DRAFT, PUBLISHED, SOLD_OUT, CANCELLED, FINISHED), `TicketType` (GENERAL, VIP, BACKSTAGE, STUDENT), `TicketStatus` (RESERVED, PAID, CANCELLED, USED).
 
-- `EventCategory`: MUSIC, SPORTS, TECHNOLOGY, EDUCATION, CULTURE, ENTERTAINMENT
-- `EventStatus`: DRAFT, PUBLISHED, SOLD_OUT, CANCELLED, FINISHED
-- `TicketType`: GENERAL, VIP, BACKSTAGE, STUDENT
-- `TicketStatus`: RESERVED, PAID, CANCELLED, USED
+### Integridad en PostgreSQL
 
-Todos se persisten con `@Enumerated(EnumType.STRING)` — por nombre estable, nunca por ordinal (BR-008), para que el esquema no dependa del orden de declaración en Java.
-
-## Relaciones y constraints
-
-| Relación | Mecanismo |
+| Regla | Mecanismo |
 |---|---|
-| `Venue 1:N Event` | FK `venue_id` en `events` |
-| `User 1:1 UserProfile` | FK `user_id` en `user_profiles`, con `UNIQUE` |
-| `Event N:M Artist` | Tabla intermedia `event_artists`, PK compuesta `(event_id, artist_id)` |
-| `Ticket → User`, `Ticket → Event` | FKs `user_id` y `event_id` en `tickets`, ambas `NOT NULL` |
-
-Constraints reforzados en PostgreSQL: `UNIQUE` en `venues.code`, `events.event_code`, `artists.stage_name`, `users.username`, `users.email`, `tickets.ticket_code`; `CHECK` en `venues.capacity > 0` y `tickets.price >= 0`.
-
-## Requisitos previos
-
-- Java 21
-- Docker Desktop (o Docker Engine) corriendo — necesario para Testcontainers
-- Maven (o el wrapper `mvnw` / `mvnw.cmd` incluido)
-
-## Cómo ejecutar
-
-```bash
-./mvnw clean install        # Mac/Linux
-.\mvnw.cmd clean install    # Windows
-```
-
-Para correr contra un PostgreSQL real (no necesario para los tests), configura `DB_URL`, `DB_USER`, `DB_PASSWORD`, o usa los valores por defecto de `application.yml` (`localhost:5432/pulsepass`).
-
-## Cómo ejecutar los tests
-
-```bash
-./mvnw test        # Mac/Linux
-.\mvnw.cmd test     # Windows
-```
-
-Todos los tests están en `PersistenceIntegrationTest`, y corren contra un contenedor real de PostgreSQL levantado automáticamente por Testcontainers (NFR-004, NFR-005) — Docker debe estar corriendo antes de ejecutar este comando.
+| Códigos y credenciales únicos | `UNIQUE` en `venues.code`, `events.event_code`, `artists.stage_name`, `users.username`, `users.email`, `tickets.ticket_code` |
+| Capacidad y precio válidos | `CHECK (capacity > 0)`, `CHECK (price >= 0)` |
+| Relación 1:1 usuario-perfil | FK `user_profiles.user_id` con `UNIQUE` |
+| Relación N:M evento-artista | PK compuesta `(event_id, artist_id)` en `event_artists` |
+| Estados y catálogos válidos | `CHECK` sobre `category`, `status` y `type` |
 
 ## Flyway
 
-Flyway es el único responsable de crear y evolucionar el esquema (NFR-002). Se usa `ddl-auto: validate`, de modo que Hibernate únicamente valida que las entidades coincidan con las tablas ya creadas, sin poder modificarlas.
+Flyway es el único responsable de crear y evolucionar el esquema. Hibernate trabaja con `ddl-auto: validate`: solo comprueba que las entidades coincidan con las tablas.
 
 | Migración | Objetivo |
 |---|---|
-| `V1__create_schema.sql` | Crea las 7 tablas (`venues`, `events`, `artists`, `event_artists`, `users`, `user_profiles`, `tickets`) con PK, FK, UNIQUE, CHECK e índices |
-| `V2__insert_initial_artists.sql` | Inserta el catálogo inicial: Solar Beat, Neon Waves, Caribbean Sound, Ocean Drive, Digital Pulse |
-| `V3__add_streaming_url_to_event.sql` | Agrega `streaming_url` (nullable) a `events`, sin modificar V1 (FR-EVT-006) |
+| `V1__create_schema.sql` | Crea las 7 tablas con PK, FK, UNIQUE, CHECK e índices |
+| `V2__insert_initial_artists.sql` | Catálogo inicial: Solar Beat, Neon Waves, Caribbean Sound, Ocean Drive, Digital Pulse |
+| `V3__add_streaming_url_to_event.sql` | Agrega `streaming_url` (nullable) a `events` sin modificar V1 |
 
-Una base vacía puede reconstruirse por completo ejecutando las 3 migraciones en orden (NFR-003).
+## Capa de servicios
 
-## Testcontainers
+Cada servicio tiene interfaz e implementación `@Service`, con inyección por constructor. Las lecturas usan `@Transactional(readOnly = true)` y las escrituras `@Transactional`.
 
-Los tests de integración no usan H2: se ejecutan contra un contenedor real de PostgreSQL (`postgres:18-alpine`), levantado y destruido automáticamente por Testcontainers en cada corrida, vía `@Testcontainers` y `@ServiceConnection`. Esto permite comprobar constraints reales (UNIQUE, FK, 1:1) con la misma fidelidad que tendría el entorno de producción.
+| Servicio | Operaciones |
+|---|---|
+| `VenueService` | `findByCode`, `findActiveVenues` |
+| `ArtistService` | `findById`, `findByStageName`, `findActiveArtists` |
+| `UserService` | `register`, `findByEmail`, `findByUsername` |
+| `EventService` | `create`, `findByCode`, `findPublishedEvents`, `publish`, `addArtist`, `findByArtist` |
+| `TicketService` | `purchase`, `findByCode`, `findByUserEmail`, `findPaidTicketsByEvent`, `cancel`, `markAsUsed` |
 
-## Query Methods implementados
+### Reglas de negocio principales
 
-| Repository | Método | Requisito |
-|---|---|---|
-| `VenueRepository` | `findByCode(String code)` | FR-VEN-001 |
-| `EventRepository` | `findByEventCode(String eventCode)` | FR-EVT-002 |
-| `EventRepository` | `findByStatusOrderByEventDateAsc(EventStatus status)` | FR-EVT-005 |
-| `EventRepository` | `findByVenueCode(String venueCode)` | FR-VEN-004 |
-| `UserRepository` | `findByEmailIgnoreCase(String email)` | FR-USR-002 |
-| `TicketRepository` | `findByUserEmailIgnoreCase(String email)` / `...AndStatus(...)` | FR-TKT-006 |
-| `TicketRepository` | `findByEventEventCodeAndStatus(String eventCode, TicketStatus status)` | FR-TKT-007 |
-| `ArtistRepository` | `findByStageNameIgnoreCase(String stageName)` | — |
+**Eventos**
+- No pueden existir dos eventos con el mismo `eventCode`.
+- El venue debe existir y estar activo.
+- La fecha debe ser futura y `minimumAge >= 0`.
+- Todo evento nuevo inicia en `DRAFT`; el request no controla el estado.
+- Solo se publica un evento en `DRAFT`, con fecha futura y venue activo.
+- No se puede asociar dos veces el mismo artista ni agregar artistas a eventos `CANCELLED` o `FINISHED`.
 
-## Consultas JPQL implementadas (`@Query`)
+**Usuarios**
+- `username` único y `email` único ignorando mayúsculas.
+- `birthDate` no puede ser futura.
+- `User` y `UserProfile` se crean en la misma transacción; el usuario nuevo inicia activo.
 
-| Repository | Método | Requisito |
-|---|---|---|
-| `EventRepository` | `findByArtistStageName(String stageName)` | FR-ART-004, FR-SRC-001 |
-| `EventRepository` | `findByVenueCityAndArtistStageName(String city, String stageName)` | FR-SRC-002 |
-| `EventRepository` | `findRecommendedEvents(LocalDateTime afterDate, String city, String artistText)` | FR-SRC-003 |
-| `TicketRepository` | `countPaidTicketsByEventCode(String eventCode)` | FR-TKT-008 |
+**Tickets**
+- El usuario debe existir y estar activo.
+- El evento debe existir, estar `PUBLISHED` y tener fecha futura.
+- Si el evento tiene edad mínima, se valida con `UserProfile.birthDate` evaluada en la fecha del evento.
+- Se valida capacidad: no se vende si `paidTickets >= venue.capacity`.
+- Si la compra completa la capacidad, el evento pasa a `SOLD_OUT` en la misma transacción.
+- Una compra válida genera un ticket `PAID`.
+- Solo un ticket `PAID` puede cancelarse (y antes de la fecha del evento) o marcarse como usado (`PAID → USED`).
+- Un ticket `CANCELLED` nunca puede usarse.
 
-## Reglas del taller respetadas
+### Estrategia de precio
 
-- `ddl-auto: validate` — Flyway crea el esquema, Hibernate solo valida.
-- Sin H2 — todas las pruebas corren contra PostgreSQL real vía Testcontainers.
-- Sin SQL nativo en los repositories — todas las consultas personalizadas usan JPQL.
-- Sin Lombok `@Data` sobre las entidades.
-- Precios modelados con `BigDecimal`/`NUMERIC`, nunca `float`/`double` (BR-007, NFR-008).
+El cliente no envía el precio. El servicio lo calcula con `BigDecimal` a partir de un precio base y el tipo de ticket:
+
+| Tipo | Precio |
+|---|---|
+| `GENERAL` | precio base |
+| `STUDENT` | 50 % del precio base |
+| `VIP` | 2 × precio base |
+| `BACKSTAGE` | 3 × precio base |
+
+### DTOs y mappers
+
+- Los DTOs son `record` inmutables, organizados en `dto/request` y `dto/response`.
+- Ningún servicio expone entidades JPA.
+- MapStruct (`componentModel = "spring"`) transforma Entity → DTO. Por ejemplo, `TicketMapper` aplana `ticket.user.email`, `ticket.event.eventCode` y `ticket.event.name`.
+
+### Excepciones
+
+| Excepción | Cuándo se lanza |
+|---|---|
+| `ResourceNotFoundException` | El recurso solicitado no existe |
+| `DuplicateResourceException` | Conflicto de unicidad (username, email, eventCode) |
+| `BusinessRuleException` | El recurso existe, pero la operación viola una regla |
+
+## Estructura del proyecto
+
+```
+src/main/java/com/pulsepass/platform
+├── PulsepassApplication.java
+├── domain/        entidades y enums
+├── repository/    JpaRepository, Query Methods y JPQL
+├── dto/
+│   ├── request/   CreateEventRequest, RegisterUserRequest, PurchaseTicketRequest
+│   └── response/  VenueResponse, EventResponse, EventSummaryResponse,
+│                  ArtistResponse, UserResponse, TicketResponse
+├── mapper/        VenueMapper, ArtistMapper, EventMapper, UserMapper, TicketMapper
+├── exception/     ResourceNotFound, BusinessRule, DuplicateResource
+└── service/
+    ├── (interfaces)
+    └── impl/      implementaciones @Service
+
+src/main/resources
+├── application.yml
+└── db/migration/  V1, V2, V3
+
+src/test/java/com/pulsepass/platform
+├── PersistenceIntegrationTest.java
+└── service/       tests unitarios de cada servicio
+```
+
+
+
+## Pruebas
+
+El proyecto tiene dos tipos de pruebas con objetivos distintos.
+
+### Pruebas unitarias de servicios
+
+- JUnit 5 + Mockito + AssertJ, con `@ExtendWith(MockitoExtension.class)`.
+- Repositories y mappers se reemplazan por mocks.
+- No levantan PostgreSQL, ni Testcontainers, ni el contexto de Spring.
+- Usan `when(...)`, `verify(...)` y `verify(..., never()).save(...)` en los caminos inválidos, para demostrar que una operación que viola una regla nunca se persiste.
+- Cubren los caminos felices y de error de los cinco servicios, incluidas la compra del último ticket (cambio a `SOLD_OUT`) y las transiciones de estado del ticket.
+
+Para ejecutar solo estas pruebas (no requieren Docker):
+
+```bash
+.\mvnw.cmd test -Dtest="*ServiceImplTest"
+```
+
+### Pruebas de integración de persistencia
+
+`PersistenceIntegrationTest` corre contra un contenedor real de PostgreSQL (`postgres:18-alpine`) levantado por Testcontainers con `@ServiceConnection`. Verifica que Flyway aplique V1–V3, las relaciones 1:N, 1:1 y N:M, los Query Methods, las consultas JPQL y las constraints reales (UNIQUE, CHECK, 1:1). Requiere Docker.
+
+### Suite completa
+
+```bash
+.\mvnw.cmd clean test
+```
+
+
+
