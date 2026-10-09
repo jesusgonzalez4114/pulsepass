@@ -95,4 +95,5 @@ public class Event {
     public List<Ticket> getTickets() { return tickets; }
 
     public void setStatus(EventStatus status) { this.status = status; }
+
 }
