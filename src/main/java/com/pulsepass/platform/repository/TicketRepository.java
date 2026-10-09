@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface TicketRepository extends JpaRepository<Ticket, Long> {
 
@@ -16,6 +17,7 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
 
     List<Ticket> findByEventEventCodeAndStatus(String eventCode, TicketStatus status);
 
+
     @Query("""
         select count(t)
         from Ticket t
@@ -23,4 +25,8 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
         and t.status = com.pulsepass.platform.domain.TicketStatus.PAID
         """)
     long countPaidTicketsByEventCode(@Param("eventCode") String eventCode);
+
+    Optional<Ticket> findByTicketCode(String ticketCode);
+    List<Ticket> findByUserEmailIgnoreCaseOrderByPurchaseDateDesc(String email);
+    long countByEventEventCodeAndStatus(String eventCode, TicketStatus status);
 }
