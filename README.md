@@ -12,11 +12,12 @@ Plataforma para descubrir eventos y administrar entradas (conciertos, festivales
 |---|---|---|
 | Persistencia (entidades, repositories, Flyway) | Implementada | Integración con Testcontainers (PostgreSQL real) |
 | Servicios (reglas de negocio, DTOs, mappers) | Implementada | Unitarias con Mockito y AssertJ |
+| Controladores REST (endpoints, validación, errores) | Implementada | `@WebMvcTest` + MockMvc con Services mockeados |
 
 ## Arquitectura
 
 ```
-Controller (futuro)
+Controller (REST)  → Bean Validation, códigos HTTP, GlobalExceptionHandler
       ↓
    DTOs (record)
       ↓
@@ -33,6 +34,7 @@ PostgreSQL (esquema versionado con Flyway)
 
 Cada capa solo habla con la inmediatamente inferior:
 
+- **Controller** traduce HTTP a llamadas al Service y devuelve DTOs; no contiene reglas de negocio ni accede a repositories.
 - **Repository** accede a los datos y no contiene reglas de negocio.
 - **Service** decide si una operación está permitida (por ejemplo, si un usuario puede comprar una entrada) y nunca devuelve entidades JPA.
 - **DTO / Mapper** separan el modelo persistente del contrato que verán las capas externas.
@@ -153,9 +155,11 @@ src/main/java/com/pulsepass/platform
 ├── dto/
 │   ├── request/   CreateEventRequest, RegisterUserRequest, PurchaseTicketRequest
 │   └── response/  VenueResponse, EventResponse, EventSummaryResponse,
-│                  ArtistResponse, UserResponse, TicketResponse
+│                  ArtistResponse, UserResponse, TicketResponse, ErrorResponse
 ├── mapper/        VenueMapper, ArtistMapper, EventMapper, UserMapper, TicketMapper
-├── exception/     ResourceNotFound, BusinessRule, DuplicateResource
+├── controller/    VenueController, EventController, ArtistController,
+│                  UserController, TicketController
+├── exception/     ResourceNotFound, BusinessRule, DuplicateResource, GlobalExceptionHandler
 └── service/
     ├── (interfaces)
     └── impl/      implementaciones @Service
@@ -166,10 +170,79 @@ src/main/resources
 
 src/test/java/com/pulsepass/platform
 ├── PersistenceIntegrationTest.java
-└── service/       tests unitarios de cada servicio
+├── service/       tests unitarios de cada servicio
+└── controller/    tests MockMvc de cada controller
 ```
 
 
+
+## Capa de controladores (API REST)
+
+Los controllers son delgados: reciben HTTP, validan la estructura del request con Bean Validation y delegan en el Service. No acceden a repositories, no contienen reglas de negocio y solo devuelven DTOs (nunca entidades JPA).
+
+### Endpoints
+
+| Recurso | Método y ruta | Service | Éxito |
+|---|---|---|---|
+| Venues | `GET /api/venues/{code}` | `findByCode` | 200 |
+| | `GET /api/venues/active` | `findActiveVenues` | 200 |
+| Eventos | `POST /api/events` | `create` | 201 |
+| | `GET /api/events/{eventCode}` | `findByCode` | 200 |
+| | `GET /api/events/published` | `findPublishedEvents` | 200 |
+| | `PATCH /api/events/{eventCode}/publish` | `publish` | 200 |
+| | `POST /api/events/{eventCode}/artists/{artistId}` | `addArtist` | 200 |
+| | `GET /api/events/by-artist?stageName=` | `findByArtist` | 200 |
+| | `GET /api/events/{eventCode}/tickets/paid` | `findPaidTicketsByEvent` | 200 |
+| Artistas | `GET /api/artists/{id}` | `findById` | 200 |
+| | `GET /api/artists/by-stage-name?stageName=` | `findByStageName` | 200 |
+| | `GET /api/artists/active` | `findActiveArtists` | 200 |
+| Usuarios | `POST /api/users` | `register` | 201 |
+| | `GET /api/users/by-email?email=` | `findByEmail` | 200 |
+| | `GET /api/users/by-username?username=` | `findByUsername` | 200 |
+| Tickets | `POST /api/tickets` | `purchase` | 201 |
+| | `GET /api/tickets/{ticketCode}` | `findByCode` | 200 |
+| | `GET /api/tickets/by-user?email=` | `findByUserEmail` | 200 |
+| | `PATCH /api/tickets/{ticketCode}/cancel` | `cancel` | 200 |
+| | `PATCH /api/tickets/{ticketCode}/use` | `markAsUsed` | 200 |
+
+Los 20 métodos públicos de los Services tienen un endpoint. El endpoint de tickets pagados por evento vive en `TicketController` porque usa `TicketService`.
+
+### Validación de entrada
+
+La validación estructural (campo obligatorio, formato de email, longitud, valor mínimo, JSON válido) ocurre en el Controller con `@Valid` y se rechaza con 400 antes de llegar al Service. Las reglas de negocio (usuario activo, evento publicado, edad mínima, capacidad, transiciones de estado) siguen siendo responsabilidad del Service.
+
+| Request | Validaciones |
+|---|---|
+| `CreateEventRequest` | `eventCode`, `name`, `venueCode` obligatorios; `category`, `eventDate` obligatorios; `minimumAge` obligatorio y `>= 0`; `description` máx. 1000 caracteres |
+| `RegisterUserRequest` | `username`, `email`, `firstName`, `lastName` obligatorios; `email` con formato válido; `birthDate` obligatorio |
+| `PurchaseTicketRequest` | `userEmail` obligatorio y con formato de email; `eventCode` obligatorio; `type` obligatorio |
+
+### Manejo de errores
+
+Un único `GlobalExceptionHandler` (`@RestControllerAdvice`) convierte cualquier excepción en un `ErrorResponse` uniforme, sin repetir `try/catch` en los controllers:
+
+```json
+{
+  "timestamp": "2026-10-10T16:00:00",
+  "status": 400,
+  "error": "Bad Request",
+  "message": "Validation failed",
+  "details": {
+    "eventCode": "Event code is required",
+    "venueCode": "Venue code is required"
+  }
+}
+```
+
+| Causa | HTTP |
+|---|---|
+| Bean Validation, JSON mal formado, enum inválido, parámetro faltante o de tipo incorrecto | 400 |
+| `ResourceNotFoundException` y rutas inexistentes | 404 |
+| Método HTTP no soportado | 405 |
+| `DuplicateResourceException`, `BusinessRuleException` | 409 |
+| Error inesperado (no se exponen detalles internos) | 500 |
+
+Resumen de códigos de éxito: `201 Created` en las creaciones (evento, usuario, ticket) y `200 OK` en consultas y cambios de estado.
 
 ## Pruebas
 
@@ -189,6 +262,18 @@ Para ejecutar solo estas pruebas (no requieren Docker):
 .\mvnw.cmd test -Dtest="*ServiceImplTest"
 ```
 
+### Pruebas de controladores
+
+- `@WebMvcTest` + `MockMvc`, con cada Service reemplazado por `@MockitoBean`.
+- No levantan PostgreSQL, ni Testcontainers, ni el contexto completo de Spring: no requieren Docker.
+- Validan el status HTTP, el `Content-Type`, los campos JSON relevantes con `jsonPath` y el contrato `ErrorResponse`.
+- Usan `verify(...)` para comprobar la llamada al Service y `verify(..., never())` cuando un request inválido (400) no debe llegar a él.
+- Cubren los caminos 200/201, 400, 404, 409 y 500 de los cinco controllers.
+
+```bash
+.\mvnw.cmd test -Dtest="*ControllerTest"
+```
+
 ### Pruebas de integración de persistencia
 
 `PersistenceIntegrationTest` corre contra un contenedor real de PostgreSQL (`postgres:18-alpine`) levantado por Testcontainers con `@ServiceConnection`. Verifica que Flyway aplique V1–V3, las relaciones 1:N, 1:1 y N:M, los Query Methods, las consultas JPQL y las constraints reales (UNIQUE, CHECK, 1:1). Requiere Docker.
@@ -198,6 +283,3 @@ Para ejecutar solo estas pruebas (no requieren Docker):
 ```bash
 .\mvnw.cmd clean test
 ```
-
-
-
