@@ -40,7 +40,8 @@ class UserServiceImplTest {
     void shouldRegisterValidUser() {
         RegisterUserRequest request = new RegisterUserRequest(
                 "andrea", "andrea@mail.com", "Andrea", "Gomez",
-                "3001234567", "Santa Marta", LocalDate.of(2000, 1, 1));
+                "3001234567", "Santa Marta", LocalDate.of(2000, 1, 1),
+ "ClaveFicticia-2026");
 
         when(repository.existsByUsername("andrea")).thenReturn(false);
         when(repository.existsByEmailIgnoreCase("andrea@mail.com")).thenReturn(false);
@@ -58,7 +59,8 @@ class UserServiceImplTest {
     void shouldThrowWhenUsernameDuplicated() {
         RegisterUserRequest request = new RegisterUserRequest(
                 "carlos", "carlos@mail.com", "Carlos", "Ruiz",
-                "3000000000", "Bogota", LocalDate.of(1995, 5, 5));
+                "3000000000", "Bogota", LocalDate.of(1995, 5, 5),
+ "ClaveFicticia-2026");
 
         when(repository.existsByUsername("carlos")).thenReturn(true);
 
@@ -72,7 +74,8 @@ class UserServiceImplTest {
     void shouldThrowWhenEmailDuplicated() {
         RegisterUserRequest request = new RegisterUserRequest(
                 "laura", "laura@mail.com", "Laura", "Diaz",
-                "3000000001", "Cali", LocalDate.of(1998, 3, 3));
+                "3000000001", "Cali", LocalDate.of(1998, 3, 3),
+ "ClaveFicticia-2026");
 
         when(repository.existsByUsername("laura")).thenReturn(false);
         when(repository.existsByEmailIgnoreCase("laura@mail.com")).thenReturn(true);
@@ -87,7 +90,8 @@ class UserServiceImplTest {
     void shouldThrowWhenBirthDateInFuture() {
         RegisterUserRequest request = new RegisterUserRequest(
                 "miguel", "miguel@mail.com", "Miguel", "Torres",
-                "3000000002", "Medellin", LocalDate.now().plusDays(1));
+                "3000000002", "Medellin", LocalDate.now().plusDays(1),
+ "ClaveFicticia-2026");
 
         when(repository.existsByUsername("miguel")).thenReturn(false);
         when(repository.existsByEmailIgnoreCase("miguel@mail.com")).thenReturn(false);
