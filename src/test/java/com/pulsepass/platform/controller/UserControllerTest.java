@@ -40,7 +40,8 @@ class UserControllerTest {
               "lastName": "Perez",
               "phone": "3001234567",
               "city": "Santa Marta",
-              "birthDate": "1995-05-10"
+              "birthDate": "1995-05-10",
+ "password": "ClaveFicticia-2026"
             }
             """;
 
@@ -50,7 +51,8 @@ class UserControllerTest {
               "email": "no-es-un-email",
               "firstName": "Andrea",
               "lastName": "Perez",
-              "birthDate": "1995-05-10"
+              "birthDate": "1995-05-10",
+ "password": "ClaveFicticia-2026"
             }
             """;
 
