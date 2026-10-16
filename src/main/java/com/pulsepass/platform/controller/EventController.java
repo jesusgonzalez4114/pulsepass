@@ -2,12 +2,16 @@ package com.pulsepass.platform.controller;
 
 import com.pulsepass.platform.dto.request.CreateEventRequest;
 import com.pulsepass.platform.dto.response.EventResponse;
+import com.pulsepass.platform.domain.EventStatus;
 import com.pulsepass.platform.dto.response.EventSummaryResponse;
+import com.pulsepass.platform.exception.ResourceNotFoundException;
+import com.pulsepass.platform.service.AuthorizationService;
 import com.pulsepass.platform.service.EventService;
 
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -24,19 +28,27 @@ import java.util.List;
 public class EventController {
 
     private final EventService eventService;
+    private final AuthorizationService authorizationService;
 
-    public EventController(EventService eventService) {
+    public EventController(EventService eventService, AuthorizationService authorizationService) {
         this.eventService = eventService;
+        this.authorizationService = authorizationService;
     }
 
     @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<EventResponse> create(@Valid @RequestBody CreateEventRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(eventService.create(request));
     }
 
     @GetMapping("/{eventCode}")
     public ResponseEntity<EventResponse> findByCode(@PathVariable String eventCode) {
-        return ResponseEntity.ok(eventService.findByCode(eventCode));
+        EventResponse event = eventService.findByCode(eventCode);
+        // Un evento que no está publicado es invisible para el público: se responde igual que si no existiera.
+        if (event.status() != EventStatus.PUBLISHED && !authorizationService.hasStaffAccess()) {
+            throw new ResourceNotFoundException("Event not found: " + eventCode);
+        }
+        return ResponseEntity.ok(event);
     }
 
     @GetMapping("/published")
@@ -45,11 +57,13 @@ public class EventController {
     }
 
     @PatchMapping("/{eventCode}/publish")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<EventResponse> publish(@PathVariable String eventCode) {
         return ResponseEntity.ok(eventService.publish(eventCode));
     }
 
     @PostMapping("/{eventCode}/artists/{artistId}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<EventResponse> addArtist(@PathVariable String eventCode,
                                                    @PathVariable Long artistId) {
         return ResponseEntity.ok(eventService.addArtist(eventCode, artistId));
@@ -57,6 +71,12 @@ public class EventController {
 
     @GetMapping("/by-artist")
     public ResponseEntity<List<EventSummaryResponse>> findByArtist(@RequestParam String stageName) {
-        return ResponseEntity.ok(eventService.findByArtist(stageName));
+        List<EventSummaryResponse> events = eventService.findByArtist(stageName);
+        if (authorizationService.hasStaffAccess()) {
+            return ResponseEntity.ok(events);
+        }
+        return ResponseEntity.ok(events.stream()
+                .filter(event -> event.status() == EventStatus.PUBLISHED)
+                .toList());
     }
 }
