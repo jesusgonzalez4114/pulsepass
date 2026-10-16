@@ -29,8 +29,16 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import com.pulsepass.platform.support.AllowAllAuthorizationTestConfig;
+import com.pulsepass.platform.support.WebMvcSecurityTestConfig;
+import org.springframework.context.annotation.Import;
+import org.springframework.security.test.context.support.WithMockUser;
+
 
 @WebMvcTest(EventController.class)
+@Import({WebMvcSecurityTestConfig.class, AllowAllAuthorizationTestConfig.class})
+@WithMockUser(roles = "ADMIN")
+
 class EventControllerTest {
 
     @Autowired

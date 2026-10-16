@@ -4,12 +4,17 @@ import com.pulsepass.platform.dto.request.RegisterUserRequest;
 import com.pulsepass.platform.dto.response.UserResponse;
 import com.pulsepass.platform.exception.DuplicateResourceException;
 import com.pulsepass.platform.exception.ResourceNotFoundException;
+import com.pulsepass.platform.service.AuthService;
 import com.pulsepass.platform.service.UserService;
+import com.pulsepass.platform.support.AllowAllAuthorizationTestConfig;
+import com.pulsepass.platform.support.WebMvcSecurityTestConfig;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -24,6 +29,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(UserController.class)
+@Import({WebMvcSecurityTestConfig.class, AllowAllAuthorizationTestConfig.class})
+@WithMockUser(roles = "ADMIN")
 class UserControllerTest {
 
     @Autowired
@@ -31,6 +38,9 @@ class UserControllerTest {
 
     @MockitoBean
     private UserService userService;
+
+    @MockitoBean
+    private AuthService authService;
 
     private static final String VALID_BODY = """
             {
@@ -40,7 +50,8 @@ class UserControllerTest {
               "lastName": "Perez",
               "phone": "3001234567",
               "city": "Santa Marta",
-              "birthDate": "1995-05-10"
+              "birthDate": "1995-05-10",
+              "password": "ClaveFicticia-2026"
             }
             """;
 
@@ -50,7 +61,8 @@ class UserControllerTest {
               "email": "no-es-un-email",
               "firstName": "Andrea",
               "lastName": "Perez",
-              "birthDate": "1995-05-10"
+              "birthDate": "1995-05-10",
+              "password": "ClaveFicticia-2026"
             }
             """;
 
@@ -62,7 +74,7 @@ class UserControllerTest {
     // TEST-CTRL-USR-001
     @Test
     void shouldReturn201WhenUserIsRegistered() throws Exception {
-        when(userService.register(any(RegisterUserRequest.class))).thenReturn(andrea());
+        when(authService.register(any(RegisterUserRequest.class))).thenReturn(andrea());
 
         mockMvc.perform(post("/api/users")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -73,7 +85,7 @@ class UserControllerTest {
                 .andExpect(jsonPath("$.email").value("andrea@mail.com"))
                 .andExpect(jsonPath("$.active").value(true));
 
-        verify(userService).register(any(RegisterUserRequest.class));
+        verify(authService).register(any(RegisterUserRequest.class));
     }
 
     // TEST-CTRL-USR-002
@@ -88,7 +100,7 @@ class UserControllerTest {
                 .andExpect(jsonPath("$.message").value("Validation failed"))
                 .andExpect(jsonPath("$.details.email").value("Email format is invalid"));
 
-        verify(userService, never()).register(any());
+        verify(authService, never()).register(any());
     }
 
     @Test
@@ -101,9 +113,10 @@ class UserControllerTest {
                 .andExpect(jsonPath("$.details.email").value("Email is required"))
                 .andExpect(jsonPath("$.details.firstName").value("First name is required"))
                 .andExpect(jsonPath("$.details.lastName").value("Last name is required"))
-                .andExpect(jsonPath("$.details.birthDate").value("Birth date is required"));
+                .andExpect(jsonPath("$.details.birthDate").value("Birth date is required"))
+                .andExpect(jsonPath("$.details.password").value("Password is required"));
 
-        verify(userService, never()).register(any());
+        verify(authService, never()).register(any());
     }
 
     @Test
@@ -114,13 +127,57 @@ class UserControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("Malformed JSON request"));
 
-        verify(userService, never()).register(any());
+        verify(authService, never()).register(any());
+    }
+
+    // TEST-CTRL-USR-006 (Fase 4: contraseña)
+    @Test
+    void shouldReturn400WhenPasswordIsTooShort() throws Exception {
+        String body = VALID_BODY.replace("ClaveFicticia-2026", "corta");
+
+        mockMvc.perform(post("/api/users")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.details.password").value("Password must be between 12 and 72 characters"))
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("corta"))));
+
+        verify(authService, never()).register(any());
+    }
+
+    @Test
+    void shouldReturn400WhenPasswordExceedsBcrypt72BytesEvenIfItHasFewerThan72Characters() throws Exception {
+        // 40 caracteres, pero 80 bytes en UTF-8
+        String body = VALID_BODY.replace("ClaveFicticia-2026", "ñ".repeat(40));
+
+        mockMvc.perform(post("/api/users")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.details.passwordWithinBcryptLimit")
+                        .value("Password must not exceed 72 bytes in UTF-8"));
+
+        verify(authService, never()).register(any());
+    }
+
+    @Test
+    void shouldNeverReturnThePasswordNorAnyHash() throws Exception {
+        when(authService.register(any(RegisterUserRequest.class))).thenReturn(andrea());
+
+        mockMvc.perform(post("/api/users")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(VALID_BODY))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.password").doesNotExist())
+                .andExpect(jsonPath("$.passwordHash").doesNotExist())
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("ClaveFicticia"))));
     }
 
     // TEST-CTRL-USR-003
     @Test
     void shouldReturn409WhenUserAlreadyExists() throws Exception {
-        when(userService.register(any(RegisterUserRequest.class)))
+        when(authService.register(any(RegisterUserRequest.class)))
                 .thenThrow(new DuplicateResourceException("Username already exists: andrea"));
 
         mockMvc.perform(post("/api/users")
