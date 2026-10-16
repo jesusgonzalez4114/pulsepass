@@ -7,6 +7,7 @@ import com.pulsepass.platform.service.TicketService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -29,31 +30,37 @@ public class TicketController {
     }
 
     @PostMapping("/tickets")
+    @PreAuthorize("@authorizationService.canPurchaseFor(#request.userEmail())")
     public ResponseEntity<TicketResponse> purchase(@Valid @RequestBody PurchaseTicketRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(ticketService.purchase(request));
     }
 
     @GetMapping("/tickets/{ticketCode}")
+    @PreAuthorize("@authorizationService.canViewTicket(#ticketCode)")
     public ResponseEntity<TicketResponse> findByCode(@PathVariable String ticketCode) {
         return ResponseEntity.ok(ticketService.findByCode(ticketCode));
     }
 
     @GetMapping("/tickets/by-user")
+    @PreAuthorize("@authorizationService.canAccessUserByEmail(#email)")
     public ResponseEntity<List<TicketResponse>> findByUserEmail(@RequestParam String email) {
         return ResponseEntity.ok(ticketService.findByUserEmail(email));
     }
 
     @GetMapping("/events/{eventCode}/tickets/paid")
+    @PreAuthorize("hasAnyRole('STAFF', 'ADMIN')")
     public ResponseEntity<List<TicketResponse>> findPaidTicketsByEvent(@PathVariable String eventCode) {
         return ResponseEntity.ok(ticketService.findPaidTicketsByEvent(eventCode));
     }
 
     @PatchMapping("/tickets/{ticketCode}/cancel")
+    @PreAuthorize("@authorizationService.canCancelTicket(#ticketCode)")
     public ResponseEntity<TicketResponse> cancel(@PathVariable String ticketCode) {
         return ResponseEntity.ok(ticketService.cancel(ticketCode));
     }
 
     @PatchMapping("/tickets/{ticketCode}/use")
+    @PreAuthorize("hasAnyRole('STAFF', 'ADMIN')")
     public ResponseEntity<TicketResponse> markAsUsed(@PathVariable String ticketCode) {
         return ResponseEntity.ok(ticketService.markAsUsed(ticketCode));
     }
