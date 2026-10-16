@@ -2,7 +2,7 @@
 
 Plataforma para descubrir eventos y administrar entradas (conciertos, festivales, conferencias, eventos universitarios, deportivos y culturales).
 
-**Java 21 · Spring Boot 4 · Spring Data JPA · Hibernate · Flyway · PostgreSQL · MapStruct · JUnit 5 · Mockito · AssertJ · Testcontainers**
+**Java 21 · Spring Boot 4 · Spring Data JPA · Hibernate · Flyway · PostgreSQL · MapStruct · Spring Security · JJWT · JUnit 5 · Mockito · AssertJ · Testcontainers**
 
 **Desarrolladores:** Jesus Gonzalez (2023214046) · Anuar Hatum (2023214056)
 
@@ -13,11 +13,14 @@ Plataforma para descubrir eventos y administrar entradas (conciertos, festivales
 | Persistencia (entidades, repositories, Flyway) | Implementada | Integración con Testcontainers (PostgreSQL real) |
 | Servicios (reglas de negocio, DTOs, mappers) | Implementada | Unitarias con Mockito y AssertJ |
 | Controladores REST (endpoints, validación, errores) | Implementada | `@WebMvcTest` + MockMvc con Services mockeados |
+| Seguridad (JWT, roles, autorización por propiedad) | Implementada | Unitarias, `@WebMvcTest` con seguridad real e integración con Testcontainers |
 
 ## Arquitectura
 
 ```
-Controller (REST)  → Bean Validation, códigos HTTP, GlobalExceptionHandler
+Spring Security    → filtro JWT, roles, 401/403 (JwtAuthenticationFilter, SecurityConfig)
+      ↓
+Controller (REST)  → Bean Validation, @PreAuthorize, códigos HTTP, GlobalExceptionHandler
       ↓
    DTOs (record)
       ↓
@@ -45,6 +48,8 @@ Cada capa solo habla con la inmediatamente inferior:
 Venue 1 ──── N Event
 Event N ──── M Artist        (tabla intermedia: event_artists)
 User  1 ──── 1 UserProfile
+User  1 ──── 1 UserCredential   (hash de contraseña)
+User  1 ──── N UserRole         (USER, STAFF, ADMIN)
 User  1 ──── N Ticket
 Event 1 ──── N Ticket
 ```
@@ -56,6 +61,8 @@ Event 1 ──── N Ticket
 | `Artist` | Artista que participa en uno o varios eventos |
 | `User` | Usuario de la plataforma |
 | `UserProfile` | Perfil individual del usuario (1:1) |
+| `UserCredential` | Hash BCrypt de la contraseña (nunca la contraseña) |
+| `UserRole` | Rol de un usuario: `USER`, `STAFF` o `ADMIN` |
 | `Ticket` | Entrada de un usuario para un evento, con tipo, precio y estado propios |
 
 `Ticket` es una entidad y no un `@ManyToMany` simple porque tiene datos propios (`ticketCode`, `type`, `price`, `status`, `purchaseDate`).
@@ -82,6 +89,7 @@ Flyway es el único responsable de crear y evolucionar el esquema. Hibernate tra
 | `V1__create_schema.sql` | Crea las 7 tablas con PK, FK, UNIQUE, CHECK e índices |
 | `V2__insert_initial_artists.sql` | Catálogo inicial: Solar Beat, Neon Waves, Caribbean Sound, Ocean Drive, Digital Pulse |
 | `V3__add_streaming_url_to_event.sql` | Agrega `streaming_url` (nullable) a `events` sin modificar V1 |
+| `V4__security_credentials_roles.sql` | Crea `user_credentials` y `user_roles`; los usuarios existentes reciben rol `USER` sin credencial |
 
 ## Capa de servicios
 
@@ -153,25 +161,33 @@ src/main/java/com/pulsepass/platform
 ├── domain/        entidades y enums
 ├── repository/    JpaRepository, Query Methods y JPQL
 ├── dto/
-│   ├── request/   CreateEventRequest, RegisterUserRequest, PurchaseTicketRequest
+│   ├── request/   CreateEventRequest, RegisterUserRequest, PurchaseTicketRequest, LoginRequest
 │   └── response/  VenueResponse, EventResponse, EventSummaryResponse,
-│                  ArtistResponse, UserResponse, TicketResponse, ErrorResponse
+│                  ArtistResponse, UserResponse, TicketResponse, ErrorResponse,
+│                  AuthResponse, AuthenticatedUserResponse
 ├── mapper/        VenueMapper, ArtistMapper, EventMapper, UserMapper, TicketMapper
 ├── controller/    VenueController, EventController, ArtistController,
-│                  UserController, TicketController
+│                  UserController, TicketController, AuthController
+├── security/      SecurityConfig, JwtService, JwtProperties, JwtAuthenticationFilter,
+│                  SecurityPrincipal, CustomUserDetailsService,
+│                  RestAuthenticationEntryPoint, RestAccessDeniedHandler
 ├── exception/     ResourceNotFound, BusinessRule, DuplicateResource, GlobalExceptionHandler
 └── service/
-    ├── (interfaces)
-    └── impl/      implementaciones @Service
+    ├── (interfaces)  incluye AuthService y AuthorizationService
+    └── impl/         implementaciones @Service
 
 src/main/resources
 ├── application.yml
-└── db/migration/  V1, V2, V3
+└── db/migration/  V1, V2, V3, V4
 
 src/test/java/com/pulsepass/platform
 ├── PersistenceIntegrationTest.java
-├── service/       tests unitarios de cada servicio
-└── controller/    tests MockMvc de cada controller
+├── SecurityPersistenceIntegrationTest.java
+├── AuthFlowIntegrationTest.java
+├── service/       tests unitarios de cada servicio (incluye AuthServiceImplTest)
+├── controller/    tests MockMvc de cada controller (incluye AuthControllerTest)
+├── security/      JwtService, filtro, UserDetailsService, AuthorizationService y matriz HTTP
+└── support/       configuración compartida de pruebas con seguridad
 ```
 
 
@@ -199,13 +215,15 @@ Los controllers son delgados: reciben HTTP, validan la estructura del request co
 | Usuarios | `POST /api/users` | `register` | 201 |
 | | `GET /api/users/by-email?email=` | `findByEmail` | 200 |
 | | `GET /api/users/by-username?username=` | `findByUsername` | 200 |
+| Auth | `POST /api/auth/login` | `AuthService.login` | 200 |
+| | `GET /api/auth/me` | usuario autenticado | 200 |
 | Tickets | `POST /api/tickets` | `purchase` | 201 |
 | | `GET /api/tickets/{ticketCode}` | `findByCode` | 200 |
 | | `GET /api/tickets/by-user?email=` | `findByUserEmail` | 200 |
 | | `PATCH /api/tickets/{ticketCode}/cancel` | `cancel` | 200 |
 | | `PATCH /api/tickets/{ticketCode}/use` | `markAsUsed` | 200 |
 
-Los 20 métodos públicos de los Services tienen un endpoint. El endpoint de tickets pagados por evento vive en `TicketController` porque usa `TicketService`.
+Los 20 métodos públicos de `VenueService`, `ArtistService`, `UserService`, `EventService` y `TicketService` tienen un endpoint; el acceso a cada uno se detalla en la sección Seguridad. El endpoint de tickets pagados por evento vive en `TicketController` porque usa `TicketService`.
 
 ### Validación de entrada
 
@@ -214,7 +232,8 @@ La validación estructural (campo obligatorio, formato de email, longitud, valor
 | Request | Validaciones |
 |---|---|
 | `CreateEventRequest` | `eventCode`, `name`, `venueCode` obligatorios; `category`, `eventDate` obligatorios; `minimumAge` obligatorio y `>= 0`; `description` máx. 1000 caracteres |
-| `RegisterUserRequest` | `username`, `email`, `firstName`, `lastName` obligatorios; `email` con formato válido; `birthDate` obligatorio |
+| `RegisterUserRequest` | `username`, `email`, `firstName`, `lastName` obligatorios; `email` con formato válido; `birthDate` obligatorio; `password` obligatoria, de 12 a 72 caracteres y máximo 72 bytes en UTF-8 |
+| `LoginRequest` | `identifier` (correo o username) obligatorio, máx. 150; `password` obligatoria, máx. 72 |
 | `PurchaseTicketRequest` | `userEmail` obligatorio y con formato de email; `eventCode` obligatorio; `type` obligatorio |
 
 ### Manejo de errores
@@ -237,6 +256,8 @@ Un único `GlobalExceptionHandler` (`@RestControllerAdvice`) convierte cualquier
 | Causa | HTTP |
 |---|---|
 | Bean Validation, JSON mal formado, enum inválido, parámetro faltante o de tipo incorrecto | 400 |
+| Sin token, token inválido/expirado o credenciales incorrectas | 401 |
+| Autenticado pero sin permiso (rol o propiedad) | 403 |
 | `ResourceNotFoundException` y rutas inexistentes | 404 |
 | Método HTTP no soportado | 405 |
 | `DuplicateResourceException`, `BusinessRuleException` | 409 |
@@ -244,9 +265,78 @@ Un único `GlobalExceptionHandler` (`@RestControllerAdvice`) convierte cualquier
 
 Resumen de códigos de éxito: `201 Created` en las creaciones (evento, usuario, ticket) y `200 OK` en consultas y cambios de estado.
 
+## Seguridad (Spring Security + JJWT)
+
+La API es *stateless*: no hay sesión ni cookies. La identidad viaja en el encabezado `Authorization: Bearer <token>`.
+
+### Autenticación
+
+- **Token:** JWT firmado con HS256 (JJWT 0.13.0). Claims: `sub` (id del usuario), `iss`, `iat`, `exp` y `jti`.
+- **Duración:** 15 minutos. No hay refresh token ni lista de revocación: al vencer, se vuelve a iniciar sesión.
+- **Validación:** se exige algoritmo HS256, emisor esperado, `exp` y `sub`; cualquier otro token se rechaza con 401.
+- **Contraseñas:** BCrypt, solo se guarda el hash. BCrypt solo usa los primeros 72 **bytes**, por eso la contraseña se limita a 72 bytes en UTF-8.
+- **Login genérico:** usuario inexistente, contraseña incorrecta o usuario sin credencial responden con el mismo mensaje, para no revelar qué usuarios existen.
+- **Secretos fuera del código:** la clave de firma se lee de la variable de entorno `PULSEPASS_JWT_SECRET_BASE64` (mínimo 32 bytes en Base64). Sin ella, o con una clave débil, la aplicación **no arranca**.
+
+```powershell
+# Generar un secreto de 32 bytes
+$b = New-Object byte[] 32
+[System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
+[Convert]::ToBase64String($b)
+```
+
+| Variable | Obligatoria | Descripción |
+|---|---|---|
+| `PULSEPASS_JWT_SECRET_BASE64` | Sí | Clave HS256 en Base64 (≥ 32 bytes) |
+| `PULSEPASS_JWT_ISSUER` | No | Emisor del token (por defecto `pulsepass-api`) |
+| `DB_URL`, `DB_USER`, `DB_PASSWORD` | No | Conexión a PostgreSQL (hay valores por defecto locales) |
+
+Ver `.env.example`. En IntelliJ se definen en *Run → Edit Configurations → Environment variables*. El archivo `.env` está en `.gitignore`: nunca se sube.
+
+### Roles
+
+| Rol | Alcance |
+|---|---|
+| `USER` | Rol de todo registro nuevo: opera sobre sus propios datos |
+| `STAFF` | Además, valida tickets y consulta tickets pagados y tickets ajenos |
+| `ADMIN` | Gestiona eventos y puede actuar sobre datos de otros usuarios |
+
+No existe endpoint público para crear `STAFF` o `ADMIN`: se asignan en la base de datos (tabla `user_roles`).
+
+### Acceso por endpoint
+
+| Endpoint | Acceso |
+|---|---|
+| `POST /api/auth/login`, `POST /api/users` | Público |
+| `GET /api/venues/**`, `GET /api/artists/**` | Público |
+| `GET /api/events/{eventCode}`, `/published`, `/by-artist` | Público (los eventos que no están `PUBLISHED` se ven como 404, salvo para STAFF/ADMIN) |
+| `GET /api/auth/me` | Cualquier usuario autenticado |
+| `POST /api/tickets` | Autenticado, solo a nombre de sí mismo |
+| `GET /api/tickets/{ticketCode}` | Dueño del ticket, STAFF o ADMIN |
+| `GET /api/tickets/by-user`, `GET /api/users/by-email`, `GET /api/users/by-username` | Dueño de los datos o ADMIN |
+| `PATCH /api/tickets/{ticketCode}/cancel` | Dueño del ticket o ADMIN |
+| `PATCH /api/tickets/{ticketCode}/use`, `GET /api/events/{eventCode}/tickets/paid` | STAFF o ADMIN |
+| `POST /api/events`, `PATCH /api/events/{eventCode}/publish`, `POST /api/events/{eventCode}/artists/{artistId}` | ADMIN |
+| Cualquier otra ruta | Autenticado (denegar por defecto) |
+
+### Autorización por propiedad (anti-IDOR)
+
+Los roles no bastan: un `USER` no debe ver los tickets de otro. `AuthorizationService` compara el **id persistente** del usuario autenticado (el que viaja en el token) con el dueño del recurso, y se aplica con `@PreAuthorize("@authorizationService...")` en los controllers. Nunca se confía en el correo que llega en la petición para decidir quién es el usuario.
+
+### Errores 401 y 403
+
+`RestAuthenticationEntryPoint` y `RestAccessDeniedHandler` delegan en `GlobalExceptionHandler`, así que 401 y 403 usan el mismo `ErrorResponse` que el resto de la API. El mensaje no revela si falló el token, el usuario o la contraseña.
+
+### Decisiones y límites conocidos
+
+- Los usuarios anteriores a la Fase 4 quedan con rol `USER` y **sin credencial**: no pueden iniciar sesión hasta que se les asigne una contraseña de forma segura. No se inventó ninguna contraseña por defecto.
+- STAFF puede validar cualquier ticket: el modelo no relaciona al personal con eventos concretos.
+- Sin refresh token, sin revocación, sin CORS configurado y sin registro de cada petición.
+- `PasswordEncoder`, `AuthenticationManager` y la cadena de filtros se definen en `SecurityConfig`; CSRF está desactivado porque no hay cookies de sesión.
+
 ## Pruebas
 
-El proyecto tiene dos tipos de pruebas con objetivos distintos.
+El proyecto tiene varios tipos de pruebas con objetivos distintos.
 
 ### Pruebas unitarias de servicios
 
@@ -277,6 +367,18 @@ Para ejecutar solo estas pruebas (no requieren Docker):
 ### Pruebas de integración de persistencia
 
 `PersistenceIntegrationTest` corre contra un contenedor real de PostgreSQL (`postgres:18-alpine`) levantado por Testcontainers con `@ServiceConnection`. Verifica que Flyway aplique V1–V3, las relaciones 1:N, 1:1 y N:M, los Query Methods, las consultas JPQL y las constraints reales (UNIQUE, CHECK, 1:1). Requiere Docker.
+
+### Pruebas de seguridad
+
+- **Unitarias:** `JwtServiceTest` (token válido, expirado, manipulado, de otro emisor, `alg:none`, secreto débil), `CustomUserDetailsServiceTest`, `AuthorizationServiceImplTest`, `JwtAuthenticationFilterTest` y `AuthServiceImplTest`.
+- **`@WebMvcTest` con la seguridad real:** `AuthControllerTest` y `SecurityHttpMatrixTest`, una matriz endpoint × identidad (anónimo, dueño, ajeno, STAFF, ADMIN, token inválido o expirado) que verifica 200/401/403.
+- **Integración con PostgreSQL real:** `SecurityPersistenceIntegrationTest` (V4) y `AuthFlowIntegrationTest` (registro → login → `/me` → acceso a recursos propios y ajenos). Requieren Docker.
+- Los tests de los controladores funcionales importan `WebMvcSecurityTestConfig` y `AllowAllAuthorizationTestConfig` y usan `@WithMockUser(roles = "ADMIN")`, para seguir verificando solo códigos HTTP y DTOs.
+- Los tests usan una clave JWT ficticia definida en `src/test/resources/application.properties`; nunca usar esa clave fuera de las pruebas.
+
+```bash
+.\mvnw.cmd test -Dtest="Jwt*Test,Auth*Test,Security*Test,CustomUserDetailsServiceTest"
+```
 
 ### Suite completa
 
