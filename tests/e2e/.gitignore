@@ -1,0 +1,10 @@
+# Nunca versionar secretos ni evidencias con datos reales
+*.local.json
+*.postman_environment.local.json
+*-export*.json
+*.env
+capturas/
+evidencias/
+*.har
+.jwt-secret.local
+*.local
