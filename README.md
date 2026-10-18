@@ -385,3 +385,38 @@ Para ejecutar solo estas pruebas (no requieren Docker):
 ```bash
 .\mvnw.cmd clean test
 ```
+
+## Pruebas end-to-end manuales (Postman)
+
+La carpeta `tests/e2e/` contiene la colección Postman v2.1 (sin scripts) que recorre manualmente las **22 rutas** de la API con los roles USER, STAFF y ADMIN, un visitante anónimo y un usuario ajeno. En total son **120 casos**, cada uno con su código HTTP esperado.
+
+Las pruebas se ejecutan sobre una base PostgreSQL desechable en Docker (`pulsepass_e2e`), nunca sobre la base de desarrollo. No se versionan tokens, contraseñas ni secretos.
+
+### Contenido
+
+| Ruta | Contenido |
+|---|---|
+| `tests/e2e/fixtures/` | Seed SQL y guía de los datos de prueba |
+| `tests/e2e/postman/` | Colección, plantilla de ambiente (sin secretos) y tabla de variables |
+| `tests/e2e/registro-parte-A.md` | Bitácora de Jesus Gonzalez: esperado vs observado |
+| `tests/e2e/registro-parte-B.md` | Bitácora de Anuar Hatum: esperado vs observado |
+
+### Requisitos
+
+- Docker Desktop
+- Java 21 e IntelliJ IDEA
+- Postman (importar la colección y el ambiente; no abrir la carpeta como espacio de trabajo local)
+- PowerShell 5.1 o superior
+
+### Política de respuestas verificada
+
+| Situación | Código esperado |
+|---|---|
+| Sin token en ruta protegida | 401 |
+| Recurso existente de otro usuario | 403 |
+| Recurso inexistente o borrador visto desde la parte pública | 404 |
+| Token inválido en ruta pública | Se ignora (200) |
+
+### Resultados
+
+Las dos bitácoras registran los 120 casos, todos coincidieron con el resultado esperado (PASS).
